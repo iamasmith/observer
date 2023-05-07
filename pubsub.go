@@ -117,10 +117,14 @@ func (p *Pubsub[M]) safeWrite(ch chan M, message M) {
 
 // Client calls
 
-func (p *Pubsub[M]) Subscribe(topic string) *Subscriber[M] {
+func (p *Pubsub[M]) Subscribe(topic string, bufLen ...int) *Subscriber[M] {
 	var s Subscriber[M]
 	s.topic = topic
-	s.ch = make(chan M)
+	if len(bufLen) < 1 {
+		s.ch = make(chan M)
+	} else {
+		s.ch = make(chan M, bufLen[0])
+	}
 	s.ready = make(chan struct{})
 	s.p = p
 	p.subscribe <- s

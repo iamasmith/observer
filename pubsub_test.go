@@ -108,7 +108,7 @@ func TestPlainStructType(t *testing.T) {
 	message := struct{}{}
 	p := NewPubsub[struct{}]()
 	defer p.Shutdown()
-	s := p.Subscribe(topic)
+	s := p.Subscribe(topic, 1)
 	defer s.Unsubscribe()
 	p.Publish(topic, message)
 	msg := <-s.CH()
