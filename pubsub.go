@@ -8,7 +8,7 @@ type subscriber[M comparable] struct {
 	topic string
 	ch    chan M
 	ready chan struct{}
-	p     *pubsub[M]
+	p     *Pubsub[M]
 }
 
 type pubsubMessage[M comparable] struct {
@@ -16,7 +16,7 @@ type pubsubMessage[M comparable] struct {
 	message M
 }
 
-type pubsub[M comparable] struct {
+type Pubsub[M comparable] struct {
 	shutdown    chan struct{}
 	wg          sync.WaitGroup
 	ready       chan struct{}
@@ -28,8 +28,8 @@ type pubsub[M comparable] struct {
 	remaining int
 }
 
-func NewPubsub[M comparable]() *pubsub[M] {
-	var p pubsub[M]
+func NewPubsub[M comparable]() *Pubsub[M] {
+	var p Pubsub[M]
 	p.shutdown = make(chan struct{})
 	p.clients = map[string][]subscriber[M]{}
 	p.input = make(chan pubsubMessage[M])
@@ -42,16 +42,16 @@ func NewPubsub[M comparable]() *pubsub[M] {
 	return &p
 }
 
-func (p *pubsub[M]) Shutdown() {
+func (p *Pubsub[M]) Shutdown() {
 	close(p.shutdown)
 	p.wg.Wait()
 }
 
-func (p *pubsub[M]) Publish(topic string, message M) {
+func (p *Pubsub[M]) Publish(topic string, message M) {
 	p.input <- pubsubMessage[M]{topic: topic, message: message}
 }
 
-func (p *pubsub[M]) runpubsub() {
+func (p *Pubsub[M]) runpubsub() {
 	p.wg.Add(1)
 	go func() {
 		p.ready <- struct{}{}
@@ -108,7 +108,7 @@ func (p *pubsub[M]) runpubsub() {
 // Unsubscribing client closes channel
 // this is necessary to avoid deadlocks sending to a client
 // which would then in turn block the main routine handler
-func (p *pubsub[M]) safeWrite(ch chan M, message M) {
+func (p *Pubsub[M]) safeWrite(ch chan M, message M) {
 	defer func() {
 		recover()
 	}()
@@ -117,7 +117,7 @@ func (p *pubsub[M]) safeWrite(ch chan M, message M) {
 
 // Client calls
 
-func (p *pubsub[M]) Subscribe(topic string) *subscriber[M] {
+func (p *Pubsub[M]) Subscribe(topic string) *subscriber[M] {
 	var s subscriber[M]
 	s.topic = topic
 	s.ch = make(chan M)
