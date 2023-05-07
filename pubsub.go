@@ -4,7 +4,7 @@ import (
 	"sync"
 )
 
-type subscriber[M comparable] struct {
+type Subscriber[M comparable] struct {
 	topic string
 	ch    chan M
 	ready chan struct{}
@@ -21,9 +21,9 @@ type Pubsub[M comparable] struct {
 	wg          sync.WaitGroup
 	ready       chan struct{}
 	input       chan pubsubMessage[M]
-	clients     map[string][]subscriber[M]
-	subscribe   chan subscriber[M]
-	unsubscribe chan subscriber[M]
+	clients     map[string][]Subscriber[M]
+	subscribe   chan Subscriber[M]
+	unsubscribe chan Subscriber[M]
 	// Used to gather termination information
 	remaining int
 }
@@ -31,10 +31,10 @@ type Pubsub[M comparable] struct {
 func NewPubsub[M comparable]() *Pubsub[M] {
 	var p Pubsub[M]
 	p.shutdown = make(chan struct{})
-	p.clients = map[string][]subscriber[M]{}
+	p.clients = map[string][]Subscriber[M]{}
 	p.input = make(chan pubsubMessage[M])
-	p.subscribe = make(chan subscriber[M])
-	p.unsubscribe = make(chan subscriber[M])
+	p.subscribe = make(chan Subscriber[M])
+	p.unsubscribe = make(chan Subscriber[M])
 	p.wg = sync.WaitGroup{}
 	p.ready = make(chan struct{}, 1)
 	p.runpubsub()
@@ -70,14 +70,14 @@ func (p *Pubsub[M]) runpubsub() {
 					}
 				}
 				// Deref original map
-				p.clients = map[string][]subscriber[M]{}
+				p.clients = map[string][]Subscriber[M]{}
 				running = false
 			case sub := <-p.subscribe:
 				list, has := p.clients[sub.topic]
 				if has {
 					list = append(list, sub)
 				} else {
-					list = []subscriber[M]{sub}
+					list = []Subscriber[M]{sub}
 				}
 				p.clients[sub.topic] = list
 				sub.ready <- struct{}{}
@@ -117,8 +117,8 @@ func (p *Pubsub[M]) safeWrite(ch chan M, message M) {
 
 // Client calls
 
-func (p *Pubsub[M]) Subscribe(topic string) *subscriber[M] {
-	var s subscriber[M]
+func (p *Pubsub[M]) Subscribe(topic string) *Subscriber[M] {
+	var s Subscriber[M]
 	s.topic = topic
 	s.ch = make(chan M)
 	s.ready = make(chan struct{})
@@ -128,11 +128,11 @@ func (p *Pubsub[M]) Subscribe(topic string) *subscriber[M] {
 	return &s
 }
 
-func (s *subscriber[M]) CH() chan M {
+func (s *Subscriber[M]) CH() chan M {
 	return s.ch
 }
 
-func (s *subscriber[M]) Unsubscribe() {
+func (s *Subscriber[M]) Unsubscribe() {
 	close(s.ch)
 	s.p.unsubscribe <- *s
 	<-s.ready
