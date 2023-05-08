@@ -40,7 +40,7 @@ func TestSubscribeNoUnsubscribe(t *testing.T) {
 }
 
 func TestRampUpDown(t *testing.T) {
-	const maxClients = 100
+	const maxClients = 1000
 	const topic = "test"
 	p := NewPubsub[string]()
 	defer p.Shutdown()
@@ -90,13 +90,14 @@ func TestRampUpDown(t *testing.T) {
 					running = false
 				case msg := <-s.CH():
 					messageCounts[id]++
-					t.Logf("%#v %#v", &s, msg)
+					t.Logf("%v got %v", &s, msg)
 				}
 			}
 			l.Lock()
 			current--
 			l.Unlock()
 			s.Unsubscribe()
+			s.Drain(time.Duration(5) * time.Second)
 		}()
 	}
 	wgS.Wait()

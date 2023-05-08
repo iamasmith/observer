@@ -1,14 +1,18 @@
 package observer
 
 import (
+	"context"
 	"sync"
+	"time"
 )
 
 type Subscriber[M comparable] struct {
-	topic string
-	ch    chan M
-	ready chan struct{}
-	p     *Pubsub[M]
+	topic  string
+	ch     chan M
+	ready  chan struct{}
+	active bool
+	l      sync.RWMutex
+	p      *Pubsub[M]
 }
 
 type pubsubMessage[M comparable] struct {
@@ -21,9 +25,11 @@ type Pubsub[M comparable] struct {
 	wg          sync.WaitGroup
 	ready       chan struct{}
 	input       chan pubsubMessage[M]
-	clients     map[string][]Subscriber[M]
-	subscribe   chan Subscriber[M]
-	unsubscribe chan Subscriber[M]
+	clients     map[string][]*Subscriber[M]
+	l           sync.RWMutex
+	subscribe   chan *Subscriber[M]
+	unsubscribe chan *Subscriber[M]
+	active      bool
 	// Used to gather termination information
 	remaining int
 }
@@ -31,13 +37,15 @@ type Pubsub[M comparable] struct {
 func NewPubsub[M comparable]() *Pubsub[M] {
 	var p Pubsub[M]
 	p.shutdown = make(chan struct{})
-	p.clients = map[string][]Subscriber[M]{}
+	p.clients = map[string][]*Subscriber[M]{}
+	p.l = sync.RWMutex{}
 	p.input = make(chan pubsubMessage[M])
-	p.subscribe = make(chan Subscriber[M])
-	p.unsubscribe = make(chan Subscriber[M])
+	p.subscribe = make(chan *Subscriber[M])
+	p.unsubscribe = make(chan *Subscriber[M])
 	p.wg = sync.WaitGroup{}
 	p.ready = make(chan struct{}, 1)
-	p.runpubsub()
+	p.runSubscription()
+	p.runPublish()
 	<-p.ready
 	return &p
 }
@@ -48,13 +56,14 @@ func (p *Pubsub[M]) Shutdown() {
 }
 
 func (p *Pubsub[M]) Publish(topic string, message M) {
-	p.input <- pubsubMessage[M]{topic: topic, message: message}
+	if p.active {
+		p.input <- pubsubMessage[M]{topic: topic, message: message}
+	}
 }
 
-func (p *Pubsub[M]) runpubsub() {
+func (p *Pubsub[M]) runSubscription() {
 	p.wg.Add(1)
 	go func() {
-		p.ready <- struct{}{}
 		defer p.wg.Done()
 		for running := true; running; {
 			select {
@@ -63,29 +72,42 @@ func (p *Pubsub[M]) runpubsub() {
 				close(p.subscribe)
 				close(p.unsubscribe)
 				// Close any remaining client channels
+				p.l.Lock()
 				for _, subsSet := range p.clients {
 					for _, sub := range subsSet {
 						p.remaining++
+						sub.active = false
 						close(sub.ch)
 					}
 				}
 				// Deref original map
-				p.clients = map[string][]Subscriber[M]{}
+				p.clients = map[string][]*Subscriber[M]{}
+				p.l.Unlock()
 				running = false
 			case sub := <-p.subscribe:
+				p.l.Lock()
 				list, has := p.clients[sub.topic]
 				if has {
 					list = append(list, sub)
 				} else {
-					list = []Subscriber[M]{sub}
+					list = []*Subscriber[M]{sub}
 				}
 				p.clients[sub.topic] = list
+				p.l.Unlock()
+				sub.l.Lock()
+				sub.active = true
+				sub.l.Unlock()
 				sub.ready <- struct{}{}
 			case sub := <-p.unsubscribe:
+				p.l.Lock()
 				if list, has := p.clients[sub.topic]; has {
 					for i := 0; i < len(list); i++ {
 						if list[i] == sub {
 							p.clients[sub.topic] = append(list[:i], list[i+1:]...)
+							sub.l.Lock()
+							sub.active = false
+							sub.l.Unlock()
+							close(sub.ch)
 							break
 						}
 					}
@@ -94,25 +116,41 @@ func (p *Pubsub[M]) runpubsub() {
 					}
 				}
 				close(sub.ready)
-			case msg := <-p.input:
-				if list, has := p.clients[msg.topic]; has {
-					for _, sub := range list {
-						p.safeWrite(sub.ch, msg.message)
-					}
-				}
+				p.l.Unlock()
 			}
 		}
 	}()
 }
 
-// Unsubscribing client closes channel
-// this is necessary to avoid deadlocks sending to a client
-// which would then in turn block the main routine handler
-func (p *Pubsub[M]) safeWrite(ch chan M, message M) {
-	defer func() {
-		recover()
+func (p *Pubsub[M]) runPublish() {
+	p.wg.Add(1)
+	go func() {
+		p.active = true
+		p.ready <- struct{}{}
+		defer p.wg.Done()
+		for running := true; running; {
+			select {
+			case <-p.shutdown:
+				p.active = false
+				running = false
+			case msg := <-p.input:
+				p.l.RLock()
+				list, has := p.clients[msg.topic]
+				working := make([]*Subscriber[M], len(list))
+				copy(working, list)
+				p.l.RUnlock()
+				if has {
+					for _, sub := range working {
+						sub.l.RLock()
+						if sub.active {
+							sub.ch <- msg.message
+						}
+						sub.l.RUnlock()
+					}
+				}
+			}
+		}
 	}()
-	ch <- message
 }
 
 // Client calls
@@ -127,7 +165,7 @@ func (p *Pubsub[M]) Subscribe(topic string, bufLen ...int) *Subscriber[M] {
 	}
 	s.ready = make(chan struct{})
 	s.p = p
-	p.subscribe <- s
+	p.subscribe <- &s
 	<-s.ready
 	return &s
 }
@@ -137,7 +175,23 @@ func (s *Subscriber[M]) CH() chan M {
 }
 
 func (s *Subscriber[M]) Unsubscribe() {
-	close(s.ch)
-	s.p.unsubscribe <- *s
-	<-s.ready
+	s.p.unsubscribe <- s
+}
+
+// Needed for high frequency send
+func (s *Subscriber[M]) Drain(timeout time.Duration) {
+	// defer func() {
+	// 	if err := recover(); err != nil {
+	// 		log.Printf("Drain error: %#v", err)
+	// 	}
+	// }()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	for running := true; running; {
+		select {
+		case <-s.ch:
+		case <-ctx.Done():
+			running = false
+		}
+	}
 }
