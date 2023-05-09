@@ -128,6 +128,7 @@ func (p *Pubsub[M]) runPublish() {
 		p.active = true
 		p.ready <- struct{}{}
 		defer p.wg.Done()
+		var working []*Subscriber[M]
 		for running := true; running; {
 			select {
 			case <-p.shutdown:
@@ -136,7 +137,9 @@ func (p *Pubsub[M]) runPublish() {
 			case msg := <-p.input:
 				p.l.RLock()
 				list, has := p.clients[msg.topic]
-				working := make([]*Subscriber[M], len(list))
+				if c, l := cap(working), len(list); c < l {
+					working = append(working, (make([]*Subscriber[M], l-c))...)
+				}
 				copy(working, list)
 				p.l.RUnlock()
 				if has {
