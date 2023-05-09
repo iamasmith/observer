@@ -137,18 +137,21 @@ func (p *Pubsub[M]) runPublish() {
 			case msg := <-p.input:
 				p.l.RLock()
 				list, has := p.clients[msg.topic]
-				if c, l := cap(working), len(list); c < l {
-					working = append(working, (make([]*Subscriber[M], l-c))...)
+				l := len(list)
+				if has {
+					working = append(working[:0], make([]*Subscriber[M], l)...)
+					copy(working, list)
 				}
-				copy(working, list)
 				p.l.RUnlock()
 				if has {
-					for _, sub := range working {
+					for i := 0; i < l; i++ {
+						sub := working[i]
 						sub.l.RLock()
 						if sub.active {
 							sub.ch <- msg.message
 						}
 						sub.l.RUnlock()
+						working[i] = nil
 					}
 				}
 			}
