@@ -4,9 +4,11 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestSimpleSendReceive(t *testing.T) {
+	assert := assert.New(t)
 	p := NewPubsub[string]()
 	defer p.Shutdown()
 	const topic = "test"
@@ -15,29 +17,25 @@ func TestSimpleSendReceive(t *testing.T) {
 	message := "test1"
 	p.Publish(topic, message)
 	msg := <-s.CH()
-	if msg != message {
-		t.Errorf("Expected %s got #%s", message, msg)
-	}
+	assert.Equal(msg, message, "should match")
 	message = "test2"
 	p.Publish(topic, message)
 	msg = <-s.CH()
-	if msg != message {
-		t.Errorf("Expected %s got #%s", message, msg)
-	}
+	assert.Equal(message, msg, "should match")
 }
 
 func TestSubscribeNoUnsubscribe(t *testing.T) {
+	assert := assert.New(t)
 	p := NewPubsub[string]()
 	p.Subscribe("foo")
 	p.Subscribe("foo")
 	p.Subscribe("bar")
 	p.Shutdown()
-	if p.remaining != 3 {
-		t.Errorf("Expected %d subscribed clients have %d", 3, p.remaining)
-	}
+	assert.Equal(3, p.remaining, "has 3 clients")
 }
 
 func TestPlainStructType(t *testing.T) {
+	assert := assert.New(t)
 	const topic = "test"
 	message := struct{}{}
 	p := NewPubsub[struct{}]()
@@ -46,9 +44,7 @@ func TestPlainStructType(t *testing.T) {
 	defer s.Unsubscribe()
 	p.Publish(topic, message)
 	msg := <-s.CH()
-	if msg != message {
-		t.Errorf("Expected %#v got %#v", msg, message)
-	}
+	assert.Equal(message, msg, "should be equal")
 }
 
 type testUserStruct struct {
@@ -57,6 +53,7 @@ type testUserStruct struct {
 }
 
 func TestUserStructType(t *testing.T) {
+	assert := assert.New(t)
 	const topic = "test"
 	u, _ := uuid.NewUUID()
 	message := testUserStruct{id: u, value: "testing"}
@@ -66,12 +63,11 @@ func TestUserStructType(t *testing.T) {
 	defer s.Unsubscribe()
 	p.Publish(topic, message)
 	msg := <-s.CH()
-	if msg != message {
-		t.Errorf("Expected %#v got %#v", msg, message)
-	}
+	assert.Equal(message, msg, "should be equal")
 }
 
 func TestBoolType(t *testing.T) {
+	assert := assert.New(t)
 	const topic = "test"
 	message := false
 	p := NewPubsub[bool]()
@@ -80,18 +76,15 @@ func TestBoolType(t *testing.T) {
 	defer s.Unsubscribe()
 	p.Publish(topic, message)
 	msg := <-s.CH()
-	if msg != message {
-		t.Errorf("Expected %#v got %#v", msg, message)
-	}
+	assert.Equal(message, msg, "should be equal")
 	message = true
 	p.Publish(topic, message)
 	msg = <-s.CH()
-	if msg != message {
-		t.Errorf("Expected %#v got %#v", msg, message)
-	}
+	assert.Equal(message, msg, "should be equal")
 }
 
 func TestAnyType(t *testing.T) {
+	assert := assert.New(t)
 	const topic = "test"
 	p := NewPubsub[any]()
 	defer p.Shutdown()
@@ -101,19 +94,13 @@ func TestAnyType(t *testing.T) {
 	mA := testUserStruct{id: u, value: "testing"}
 	p.Publish(topic, mA)
 	vA := <-s.CH()
-	if mA != vA.(testUserStruct) {
-		t.Errorf("Expected %#v got %#v", mA, vA)
-	}
+	assert.Equal(mA, vA, "should be equal")
 	mB := true
 	p.Publish(topic, mB)
 	vB := <-s.CH()
-	if mB != vB.(bool) {
-		t.Errorf("Expected %#v got %#v", mB, vB)
-	}
+	assert.Equal(mB, vB, "should be equal")
 	mC := 123
 	p.Publish(topic, mC)
 	vC := <-s.CH()
-	if mC != vC.(int) {
-		t.Errorf("Expected %#v got %#v", mC, vC)
-	}
+	assert.Equal(mC, vC, "should be equal")
 }
